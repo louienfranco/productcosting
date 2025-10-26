@@ -11,17 +11,12 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import {
-  listSaves,
-  deleteSave,
-  type SavedRecord,
-  type StorageData,
-} from "@/lib/idb-saves";
+import { listSaves, deleteSave, type SavedRecord } from "@/lib/idb-saves";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onLoad: (data: StorageData) => void;
+  onLoad: (record: SavedRecord) => void;
 };
 
 export default function SavedDataModal({ open, onOpenChange, onLoad }: Props) {
@@ -33,8 +28,6 @@ export default function SavedDataModal({ open, onOpenChange, onLoad }: Props) {
     try {
       const items = await listSaves();
       setSaves(items);
-    } catch {
-      // ignore
     } finally {
       setLoading(false);
     }
@@ -53,9 +46,9 @@ export default function SavedDataModal({ open, onOpenChange, onLoad }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Saved Data</DialogTitle>
+          <DialogTitle>History</DialogTitle>
           <DialogDescription>
-            Load or delete your previously saved sessions.
+            Load or delete previously saved sessions.
           </DialogDescription>
         </DialogHeader>
 
@@ -72,15 +65,15 @@ export default function SavedDataModal({ open, onOpenChange, onLoad }: Props) {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-medium truncate">
-                      {s.name || "Untitled session"}
+                      {s.name || "Untitled"}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {new Date(s.createdAt).toLocaleString()} •{" "}
+                      {new Date(s.updatedAt ?? s.createdAt).toLocaleString()} •{" "}
                       {s.data?.rows?.length ?? 0} ingredients
                     </div>
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <Button size="sm" onClick={() => onLoad(s.data)}>
+                    <Button size="sm" onClick={() => onLoad(s)}>
                       Load
                     </Button>
                     <Button
@@ -98,7 +91,6 @@ export default function SavedDataModal({ open, onOpenChange, onLoad }: Props) {
         </div>
 
         <Separator />
-
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close

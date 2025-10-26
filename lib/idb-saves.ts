@@ -22,6 +22,7 @@ export type SavedRecord = {
   id: string;
   name: string;
   createdAt: number;
+  updatedAt?: number;
   data: StorageData;
 };
 
@@ -65,10 +66,42 @@ export async function saveData(
 
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
     const store = tx.objectStore(STORE);
     store.put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  db.close();
+  return record;
+}
+
+export async function updateSave(
+  id: string,
+  data: StorageData,
+  name?: string
+): Promise<SavedRecord> {
+  const db = await openDB();
+
+  const record = await new Promise<SavedRecord>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const existing = getReq.result as SavedRecord | undefined;
+      const updated: SavedRecord = existing
+        ? {
+            ...existing,
+            data,
+            name: name ?? existing.name,
+            updatedAt: Date.now(),
+          }
+        : { id, name: name ?? "Untitled", data, createdAt: Date.now() };
+      store.put(updated);
+      tx.oncomplete = () => resolve(updated);
+      tx.onerror = () => reject(tx.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
   });
 
   db.close();
@@ -81,10 +114,12 @@ export async function listSaves(): Promise<SavedRecord[]> {
     const tx = db.transaction(STORE, "readonly");
     const store = tx.objectStore(STORE);
     const req = store.getAll();
-    req.onsuccess = () =>
-      resolve(
-        (req.result as SavedRecord[]).sort((a, b) => b.createdAt - a.createdAt)
+    req.onsuccess = () => {
+      const items = (req.result as SavedRecord[]).sort(
+        (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt)
       );
+      resolve(items);
+    };
     req.onerror = () => reject(req.error);
   });
   db.close();
@@ -95,10 +130,10 @@ export async function deleteSave(id: string): Promise<void> {
   const db = await openDB();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
     const store = tx.objectStore(STORE);
     store.delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
   db.close();
 }

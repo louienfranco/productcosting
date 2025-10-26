@@ -15,8 +15,15 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+
 import SavedDataModal from "@/components/saved-data-modal";
-import { saveData, type StorageData } from "@/lib/idb-saves";
+import SaveAsDialog from "@/components/save-as-dialog";
+import {
+  saveData,
+  updateSave,
+  type StorageData,
+  type SavedRecord,
+} from "@/lib/idb-saves";
 
 type Row = {
   id: string;
@@ -48,9 +55,14 @@ type Computations = {
   retail: number;
 };
 
-type LSData = StorageData;
-
 const STORAGE_KEY = "recipe-costing-calculator:v1";
+const META_KEY = "recipe-costing-calculator:meta";
+
+type Meta = {
+  sessionId: string | null;
+  sessionTitle: string;
+  lastSavedJSON: string | null;
+};
 
 const genId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -64,7 +76,6 @@ const blankRow = (): Row => ({
   packQty: "0",
   need: "0",
 });
-
 const defaultRows = () => [blankRow(), blankRow(), blankRow()];
 
 const parseNum = (s: string, d = 0) => {
@@ -88,7 +99,7 @@ const toStr = (v: unknown, def: string) => {
 };
 
 export default function RecipeCostingCalculator() {
-  // Defaults: overhead 40, labor 30; rest 0
+  // Calculator state
   const [rows, setRows] = useState<Row[]>(defaultRows());
   const [overheadPct, setOverheadPct] = useState("40");
   const [laborPct, setLaborPct] = useState("30");
@@ -99,18 +110,59 @@ export default function RecipeCostingCalculator() {
   const [whMarkup, setWhMarkup] = useState("0");
   const [rtMarkup, setRtMarkup] = useState("0");
 
-  // Modal control
-  const [savedOpen, setSavedOpen] = useState(false);
+  // Session meta
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string>("Untitled");
+  const [lastSavedJSON, setLastSavedJSON] = useState<string | null>(null);
 
-  // LocalStorage hydration flag
+  // UI modals
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+
+  // LocalStorage hydration guard
   const [loaded, setLoaded] = useState(false);
 
-  // Load from localStorage
+  // Build StorageData snapshot
+  const currentData: StorageData = useMemo(
+    () => ({
+      rows,
+      overheadPct,
+      laborPct,
+      packagingCost,
+      yieldCount,
+      sellPriceBatch,
+      targetMargin,
+      whMarkup,
+      rtMarkup,
+    }),
+    [
+      rows,
+      overheadPct,
+      laborPct,
+      packagingCost,
+      yieldCount,
+      sellPriceBatch,
+      targetMargin,
+      whMarkup,
+      rtMarkup,
+    ]
+  );
+  const currentJSON = useMemo(() => JSON.stringify(currentData), [currentData]);
+
+  // Derived: canSave (only for loaded sessions with changes)
+  const canSave =
+    sessionId !== null &&
+    lastSavedJSON !== null &&
+    currentJSON !== lastSavedJSON;
+
+  // Load from localStorage (data + meta)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      const metaRaw = localStorage.getItem(META_KEY);
+
       if (raw) {
-        const data = JSON.parse(raw) as Partial<LSData>;
+        const data = JSON.parse(raw) as Partial<StorageData>;
         const loadedRows =
           Array.isArray(data.rows) && data.rows.length
             ? data.rows.map((r) => ({
@@ -121,7 +173,6 @@ export default function RecipeCostingCalculator() {
                 need: toStr(r.need, "0"),
               }))
             : defaultRows();
-
         setRows(loadedRows);
         setOverheadPct(toStr(data.overheadPct, "40"));
         setLaborPct(toStr(data.laborPct, "30"));
@@ -132,6 +183,17 @@ export default function RecipeCostingCalculator() {
         setWhMarkup(toStr(data.whMarkup, "0"));
         setRtMarkup(toStr(data.rtMarkup, "0"));
       }
+
+      if (metaRaw) {
+        const meta = JSON.parse(metaRaw) as Partial<Meta>;
+        setSessionId(meta.sessionId ?? null);
+        setSessionTitle(
+          typeof meta.sessionTitle === "string" ? meta.sessionTitle : "Untitled"
+        );
+        setLastSavedJSON(
+          typeof meta.lastSavedJSON === "string" ? meta.lastSavedJSON : null
+        );
+      }
     } catch {
       // ignore
     } finally {
@@ -139,47 +201,30 @@ export default function RecipeCostingCalculator() {
     }
   }, []);
 
-  // Save to localStorage
+  // Persist to localStorage (data)
   useEffect(() => {
     if (!loaded) return;
-    const data: LSData = {
-      rows,
-      overheadPct,
-      laborPct,
-      packagingCost,
-      yieldCount,
-      sellPriceBatch,
-      targetMargin,
-      whMarkup,
-      rtMarkup,
-    };
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch {
-      // ignore quota
-    }
-  }, [
-    loaded,
-    rows,
-    overheadPct,
-    laborPct,
-    packagingCost,
-    yieldCount,
-    sellPriceBatch,
-    targetMargin,
-    whMarkup,
-    rtMarkup,
-  ]);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
+    } catch {}
+  }, [loaded, currentData]);
+
+  // Persist meta to localStorage
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      const meta: Meta = { sessionId, sessionTitle, lastSavedJSON };
+      localStorage.setItem(META_KEY, JSON.stringify(meta));
+    } catch {}
+  }, [loaded, sessionId, sessionTitle, lastSavedJSON]);
 
   const computations = useMemo<Computations>(() => {
     const computedRows: ComputedRow[] = rows.map((r) => {
       const price = parseNum(r.price);
       const packQty = parseNum(r.packQty);
       const need = parseNum(r.need);
-
       const pricePerGram = packQty > 0 ? price / packQty : 0;
       const cost = pricePerGram * need;
-
       return { ...r, pricePerGram, cost };
     });
 
@@ -191,7 +236,7 @@ export default function RecipeCostingCalculator() {
     const overheadRate = Math.max(0, parseNum(overheadPct) / 100);
     const laborRate = Math.max(0, parseNum(laborPct) / 100);
     const pack = Math.max(0, parseNum(packagingCost));
-    const y = Math.max(1, parseNum(yieldCount) || 0); // avoid divide-by-zero
+    const y = Math.max(1, parseNum(yieldCount) || 0);
 
     const overhead = ingredientsTotal * overheadRate;
     const sub1 = ingredientsTotal + overhead;
@@ -257,7 +302,8 @@ export default function RecipeCostingCalculator() {
   const deleteRow = (id: string) =>
     setRows((prev) => prev.filter((r) => r.id !== id));
 
-  const resetDefaults = () => {
+  const createNew = () => {
+    // Start a fresh session
     setRows(defaultRows());
     setOverheadPct("40");
     setLaborPct("30");
@@ -267,41 +313,30 @@ export default function RecipeCostingCalculator() {
     setTargetMargin("0");
     setWhMarkup("0");
     setRtMarkup("0");
+
+    setSessionId(null);
+    setSessionTitle("Untitled");
+    setLastSavedJSON(null);
   };
 
-  const clearAllData = () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
-    resetDefaults();
+  const handleSaveAs = async (title: string) => {
+    const rec = await saveData(title, currentData);
+    setSessionId(rec.id);
+    setSessionTitle(rec.name || "Untitled");
+    setLastSavedJSON(currentJSON);
   };
 
-  const saveCurrentToIndexedDB = async () => {
-    try {
-      const data: StorageData = {
-        rows,
-        overheadPct,
-        laborPct,
-        packagingCost,
-        yieldCount,
-        sellPriceBatch,
-        targetMargin,
-        whMarkup,
-        rtMarkup,
-      };
-      const stamp = new Date().toLocaleString();
-      const name = `Saved ${stamp}`;
-      await saveData(name, data);
-      // Optional: feedback. You can integrate shadcn toast if available.
-    } catch (e) {
-      // Optional: alert("Failed to save.");
-      console.error(e);
-    }
+  const handleSave = async () => {
+    if (!sessionId) return;
+    const rec = await updateSave(sessionId, currentData, sessionTitle);
+    setSessionTitle(rec.name || "Untitled");
+    setLastSavedJSON(currentJSON);
   };
 
-  const loadFromModal = (data: StorageData) => {
+  const handleLoadFromHistory = (record: SavedRecord) => {
+    const d = record.data;
     setRows(
-      (Array.isArray(data.rows) ? data.rows : []).map((r) => ({
+      (Array.isArray(d.rows) ? d.rows : []).map((r) => ({
         id: typeof r.id === "string" && r.id ? r.id : genId(),
         name: toStr(r.name, ""),
         price: toStr(r.price, "0"),
@@ -309,15 +344,19 @@ export default function RecipeCostingCalculator() {
         need: toStr(r.need, "0"),
       }))
     );
-    setOverheadPct(toStr(data.overheadPct, "40"));
-    setLaborPct(toStr(data.laborPct, "30"));
-    setPackagingCost(toStr(data.packagingCost, "0"));
-    setYieldCount(toStr(data.yieldCount, "0"));
-    setSellPriceBatch(toStr(data.sellPriceBatch, "0"));
-    setTargetMargin(toStr(data.targetMargin, "0"));
-    setWhMarkup(toStr(data.whMarkup, "0"));
-    setRtMarkup(toStr(data.rtMarkup, "0"));
-    setSavedOpen(false);
+    setOverheadPct(toStr(d.overheadPct, "40"));
+    setLaborPct(toStr(d.laborPct, "30"));
+    setPackagingCost(toStr(d.packagingCost, "0"));
+    setYieldCount(toStr(d.yieldCount, "0"));
+    setSellPriceBatch(toStr(d.sellPriceBatch, "0"));
+    setTargetMargin(toStr(d.targetMargin, "0"));
+    setWhMarkup(toStr(d.whMarkup, "0"));
+    setRtMarkup(toStr(d.rtMarkup, "0"));
+
+    setSessionId(record.id);
+    setSessionTitle(record.name || "Untitled");
+    setLastSavedJSON(JSON.stringify(d));
+    setHistoryOpen(false);
   };
 
   const overheadDisplay = `${Math.round(parseNum(overheadPct) * 10) / 10}%`;
@@ -325,25 +364,37 @@ export default function RecipeCostingCalculator() {
 
   return (
     <div className="container mx-auto max-w-6xl p-4 sm:p-6 space-y-4">
-      <div className="space-y-2 sm:space-y-0 sm:flex sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Recipe Costing Calculator
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Enter ingredient costs and quantities. All calculations update
-            instantly.
-          </p>
+      <div className="space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Recipe Costing Calculator
+            </h1>
+            <div className="text-sm text-muted-foreground truncate">
+              Session:{" "}
+              <span className="font-medium text-foreground">
+                {sessionTitle || "Untitled"}
+              </span>
+              {sessionId ? " • loaded" : " • new"}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setSaveAsOpen(true)}>Save as</Button>
+            <Button onClick={handleSave} disabled={!canSave}>
+              Save
+            </Button>
+            <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+              History
+            </Button>
+            <Button variant="outline" onClick={createNew}>
+              Create new
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={saveCurrentToIndexedDB}>Save</Button>
-          <Button variant="outline" onClick={() => setSavedOpen(true)}>
-            Saved Data
-          </Button>
-          <Button variant="outline" onClick={clearAllData}>
-            Clear saved data
-          </Button>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Enter ingredient costs and quantities. All calculations update
+          instantly.
+        </p>
       </div>
 
       {/* Controls */}
@@ -687,15 +738,16 @@ export default function RecipeCostingCalculator() {
         </Card>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        All calculations run locally in your browser.
-      </p>
-
-      {/* Saved Data Modal */}
+      {/* Modals */}
       <SavedDataModal
-        open={savedOpen}
-        onOpenChange={setSavedOpen}
-        onLoad={loadFromModal}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onLoad={handleLoadFromHistory}
+      />
+      <SaveAsDialog
+        open={saveAsOpen}
+        onOpenChange={setSaveAsOpen}
+        onSave={async (title) => handleSaveAs(title)}
       />
     </div>
   );

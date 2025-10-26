@@ -368,7 +368,7 @@ export default function RecipeCostingCalculator() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">
-              Recipe Costing Calculator
+              Product Costing Calculator
             </h1>
             <div className="text-sm text-muted-foreground truncate">
               Session:{" "}

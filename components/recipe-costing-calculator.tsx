@@ -368,7 +368,7 @@ export default function RecipeCostingCalculator() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">
-              Product Costing Calculator
+              Recipe Costing Calculator
             </h1>
             <div className="text-sm text-muted-foreground truncate">
               Session:{" "}
@@ -658,7 +658,7 @@ export default function RecipeCostingCalculator() {
           <CardHeader>
             <CardTitle className="text-base">Cost breakdown</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
             <RowItem
               label="Ingredients total"
               value={fmtCurrency(computations.ingredientsTotal)}
@@ -697,7 +697,7 @@ export default function RecipeCostingCalculator() {
           <CardHeader>
             <CardTitle className="text-base">Pricing output</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
             <RowItem
               label="Profit (batch) at your price"
               value={fmtCurrency(computations.profitBatch)}
@@ -753,6 +753,12 @@ export default function RecipeCostingCalculator() {
   );
 }
 
+/**
+ * Mobile-friendly row with:
+ * - Wrapping label
+ * - Centered dashed leader line that never causes overflow
+ * - Right-aligned tabular value
+ */
 function RowItem({
   label,
   value,
@@ -764,12 +770,23 @@ function RowItem({
 }) {
   return (
     <div
-      className={`flex items-center justify-between ${
+      className={`grid grid-cols-[1fr_minmax(16px,1fr)_auto] items-center gap-2 ${
         bold ? "font-semibold" : ""
       }`}
     >
-      <span className="truncate">{label}</span>
-      <span className="tabular-nums ml-2">{value}</span>
+      {/* Wrapping label */}
+      <div className="min-w-0 break-words text-sm leading-snug">{label}</div>
+
+      {/* Centered dashed leader that fills remaining space without expanding layout */}
+      <div
+        className="h-px border-t border-dashed border-muted-foreground/30"
+        aria-hidden="true"
+      />
+
+      {/* Value stays right-aligned and doesn't shrink */}
+      <div className="tabular-nums text-right whitespace-nowrap shrink-0">
+        {value}
+      </div>
     </div>
   );
 }
